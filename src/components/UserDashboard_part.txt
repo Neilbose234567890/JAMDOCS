@@ -1,0 +1,800 @@
+import React, { useState, useRef } from 'react';
+import { 
+  Upload, FileText, Calendar, ShieldCheck, AlertTriangle, 
+  Trash2, Play, CheckCircle2, ChevronRight, Terminal, RefreshCw
+} from 'lucide-react';
+import { performRealOCR, parseExtractedText, convertPdfToCanvas } from '../utils/ocrScanner';
+import { demoTemplates } from '../utils/mockData';
+
+// Auto-resizing textarea component for text input fields to fit data dynamically without clipping
+function AutoResizeTextarea({ className, value, onChange, placeholder, required, disabled }) {
+  const textareaRef = useRef(null);
+
+  React.useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      className={className}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      required={required}
+      disabled={disabled}
+      rows={1}
+      style={{
+        resize: 'none',
+        overflow: 'hidden',
+        minHeight: '38px',
+        maxHeight: '200px',
+        display: 'block',
+        lineHeight: '1.4'
+      }}
+    />
+  );
+}
+function VerifiedField({ value, rawOcrText, children }) {
+  const verify = () => {
+    if (!value || !rawOcrText) return null;
+    const cleanVal = String(value).replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (cleanVal.length < 3) return null;
+    const cleanRaw = rawOcrText.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    return cleanRaw.includes(cleanVal);
+  };
+
+  const status = verify();
+
+  return (
+    <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center' }}>
+      {children}
+      {status === true && (
+        <CheckCircle2 size={16} color="var(--status-valid)" style={{position: 'absolute', right: '10px', pointerEvents: 'none'}} title="Verified against OCR" />
+      )}
+      {status === false && (
+        <AlertTriangle size={16} color="var(--status-expired)" style={{position: 'absolute', right: '10px', pointerEvents: 'none'}} title="Not found in OCR" />
+      )}
+    </div>
+  );
+}
+
+export default function UserDashboard({ employee, onUpdateDocuments }) {
+  const [activeTab, setActiveTab] = useState('Emirates ID');
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [scanLogs, setScanLogs] = useState([]);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [rawOcrText, setRawOcrText] = useState('');
+  
+  // OCR Form State
+  const [ocrForm, setOcrForm] = useState({
+    docNumber: '',
+    startDate: '',
+    expiryDate: '',
+    fullName: '',
+    customFields: {}
+  });
+
+  const fileInputRef = useRef(null);
+
+  const documentTypes = [
+    'Emirates ID', 'Visa', 'Labour Card', 'ILOE', 
+    'Health Card', 'Passport', 'Drivers License', 'Other Documents'
+  ];
+
+  const currentDoc = employee.documents[activeTab] || { status: 'missing' };
+
+  // Write log helper
+  const addLog = (text) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setScanLogs(prev => [...prev, { timestamp, text }]);
+  };
+
+  // Helper to determine status color
+  const getStatusClass = (status) => {
+    switch (status) {
+      case 'valid': return 'valid';
+      case 'expiring': return 'expiring';
+      case 'expired': return 'expired';
+      case 'pending': return 'pending';
+      default: return 'missing';
+    }
+  };
+
+  // Handle local File Selection
+  const handleFileChange = async (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+    
+    // Clear logs and form
+    setScanLogs([]);
+    setOcrForm({
+      docNumber: '',
+      startDate: '',
+      expiryDate: '',
+      fullName: '',
+      customFields: {}
+    });
+
+    // If user uploaded multiple images (e.g. front and back of ID)
+    if (files.length > 1) {
+      setIsScanning(true);
+      setScanProgress(5);
+      addLog(`Selected ${files.length} images. Merging into single layout...`);
+      
+      try {
+        const canvases = await Promise.all(files.map(file => {
+          return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              canvas.getContext('2d').drawImage(img, 0, 0);
+              resolve(canvas);
+            };
+            img.src = URL.createObjectURL(file);
+          });
+        }));
+
+        const totalHeight = canvases.reduce((sum, c) => sum + c.height, 0);
+        const maxWidth = Math.max(...canvases.map(c => c.width));
+        const combinedCanvas = document.createElement('canvas');
+        combinedCanvas.width = maxWidth;
+        combinedCanvas.height = totalHeight;
+        const ctx = combinedCanvas.getContext('2d');
+        let currentY = 0;
+        for (const c of canvases) {
+          ctx.drawImage(c, 0, currentY);
+          currentY += c.height;
+        }
+        
+        const dataUrl = combinedCanvas.toDataURL('image/png');
+        setPreviewUrl(dataUrl);
+        setSelectedFile(files[0]); // Keep first file for reference
+        
+        // Trigger scan using the array of canvases to prevent Tesseract distortion on massive images
+        runOCRScan(canvases, false);
+      } catch (err) {
+        addLog(`Image merge error: ${err.message || err}`);
+        setIsScanning(false);
+      }
+      return;
+    }
+
+    const file = files[0];
+    setSelectedFile(file);
+
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    
+    if (isPdf) {
+      setIsScanning(true);
+      setScanProgress(5);
+      addLog(`Selected PDF file: ${file.name}`);
+      try {
+        addLog('Converting PDF page 1 to canvas context...');
+        const canvas = await convertPdfToCanvas(file, addLog);
+        setScanProgress(15);
+        const dataUrl = canvas.toDataURL('image/png');
+        setPreviewUrl(dataUrl);
+        // Automatically trigger scan using the original multi-page PDF file
+        runOCRScan(file, false);
+      } catch (err) {
+        addLog(`PDF conversion error: ${err.message || err}`);
+        setIsScanning(false);
+      }
+    } else {
+      const url = URL.createObjectURL(file);
+      setPreviewUrl(url);
+      // Automatically trigger scan
+      runOCRScan(file, false);
+    }
+  };
+
+  // Trigger Demo Template Simulation
+  const handleDemoSelect = (templateKey) => {
+    const template = demoTemplates[templateKey];
+    if (!template) return;
+    
+    setSelectedFile({ name: `${templateKey.toLowerCase().replace(/ /g, '_')}_sample.png`, type: 'image/png' });
+    setPreviewUrl('demo'); // Special keyword for rendering simulated high-fidelity card
+    
+    setScanLogs([]);
+    setOcrForm({
+      docNumber: '',
+      startDate: '',
+      expiryDate: '',
+      fullName: '',
+      customFields: {}
+    });
+
+    runOCRScan(template, true);
+  };
+
+  // Run the OCR Scanner (Real or Mocked Demo)
+  const runOCRScan = async (source, isDemo = false) => {
+    setIsScanning(true);
+    setScanProgress(0);
+    
+    if (isDemo) {
+      // Simulate highly detailed scan process for demo templates
+      addLog("Initializing Tesseract OCR Engine (V4.0.0)...");
+      await new Promise(r => setTimeout(r, 600));
+      setScanProgress(20);
+      
+      addLog("Loading Language Training Set [English/Arabic]...");
+      await new Promise(r => setTimeout(r, 500));
+      setScanProgress(40);
+      
+      addLog("Pre-processing Image (Grayscale + Adaptive Thresholding)...");
+      await new Promise(r => setTimeout(r, 700));
+      setScanProgress(60);
+      
+      addLog("Running line layout analysis and segmentation...");
+      await new Promise(r => setTimeout(r, 500));
+      setScanProgress(85);
+      
+      addLog("Text block extracted. Commencing Regex pattern matching...");
+      await new Promise(r => setTimeout(r, 600));
+      setScanProgress(100);
+      
+      // Populate fields from mockup database
+      setOcrForm({
+        docNumber: source.docNumber,
+        startDate: source.startDate,
+        expiryDate: source.expiryDate,
+        fullName: source.extractedFields.fullName || employee.name,
+        customFields: { ...source.extractedFields }
+      });
+      
+      addLog(`Scan Completed! Found Document ID: ${source.docNumber}`);
+      setIsScanning(false);
+    } else {
+      // Run Real OCR with Tesseract
+      try {
+        addLog("Tesseract.js: Spawning background worker thread...");
+        const rawText = await performRealOCR(
+          source, 
+          (statusMsg) => {
+            addLog(statusMsg);
+          },
+          (progVal) => {
+            setScanProgress(progVal);
+          }
+        );
+        
+        const textSample = rawText.trim().replace(/\n/g, '  |  ');
+        addLog(`OCR Raw Output: "${textSample}"`);
+        setRawOcrText(rawText);
+        
+        addLog("Analyzing extracted characters...");
+        const parsed = parseExtractedText(rawText, activeTab);
+        
+        // Output debug logs to logger terminal
+        if (parsed.debugDates && parsed.debugDates.length > 0) {
+          addLog(`Raw dates found: ${parsed.debugDates.join(', ')}`);
+        } else {
+          addLog("No formatted dates found in text.");
+        }
+        if (parsed.debugValidityDates) {
+          addLog(`Validity dates candidates: ${parsed.debugValidityDates.join(', ')}`);
+        }
+        
+        setOcrForm({
+          docNumber: parsed.docNumber || 'NOT FOUND - MANUALLY INSERT',
+          startDate: parsed.startDate || '',
+          expiryDate: parsed.expiryDate || '',
+          fullName: parsed.extractedFields.fullName || employee.name,
+          customFields: parsed.extractedFields
+        });
+        
+        addLog(`Regex Extractor: Finished. Fields pre-populated.`);
+      } catch (err) {
+        addLog(`Error during scan: ${err.message || err}`);
+      } finally {
+        setIsScanning(false);
+      }
+    }
+  };
+
+  // Submit form data
+  const handleSaveDocument = (e) => {
+    e.preventDefault();
+    
+    // Evaluate status based on dates
+    let status = 'valid';
+    if (ocrForm.expiryDate) {
+      const today = new Date('2026-07-08'); // Current system date context
+      const expiry = new Date(ocrForm.expiryDate);
+      
+      if (expiry < today) {
+        status = 'expired';
+      } else {
+        const diffTime = Math.abs(expiry - today);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (diffDays <= 30) {
+          status = 'expiring';
+        }
+      }
+    }
+
+    const updatedDoc = {
+      status,
+      docNumber: ocrForm.docNumber,
+      startDate: ocrForm.startDate,
+      expiryDate: ocrForm.expiryDate,
+      extractedFields: {
+        fullName: ocrForm.fullName,
+        ...ocrForm.customFields
+      },
+      lastUpdated: new Date().toISOString().split('T')[0],
+      fileName: selectedFile ? selectedFile.name : 'scanned_doc.png'
+    };
+
+    onUpdateDocuments(employee.id, activeTab, updatedDoc);
+    
+    // Reset state
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setOcrForm({
+      docNumber: '',
+      startDate: '',
+      expiryDate: '',
+      fullName: '',
+      customFields: {}
+    });
+    setScanLogs([]);
+  };
+
+  // Delete Document record
+  const handleDeleteDoc = () => {
+    if (window.confirm(`Are you sure you want to delete your saved ${activeTab}?`)) {
+      onUpdateDocuments(employee.id, activeTab, { status: 'missing' });
+    }
+  };
+
+  // Render high-fidelity simulated graphics for mock template ID cards
+  const renderSimulatedCard = () => {
+    let cardTitle = activeTab;
+    let primaryNumber = ocrForm.docNumber || "784-XXXX-XXXXXXX-X";
+    let holderName = ocrForm.fullName || employee.name;
+    let datesText = `ISS: ${ocrForm.startDate || 'YYYY-MM-DD'}  EXP: ${ocrForm.expiryDate || 'YYYY-MM-DD'}`;
+    
+    if (activeTab === 'Emirates ID') {
+      cardTitle = "UNITED ARAB EMIRATES IDENTITY CARD";
+    } else if (activeTab === 'Visa') {
+      cardTitle = "UAE RESIDENCE VISA";
+      primaryNumber = ocrForm.docNumber || "201/YYYY/XXXXXXX";
+    } else if (activeTab === 'Passport') {
+      cardTitle = "PASSPORT / PASSEPORT";
+    }
+
+    return (
+      <div className="mock-doc-visual-card">
+        <div className="mock-card-logo-row">
+          <span>{cardTitle}</span>
+          <ShieldCheck size={18} className="text-secondary" />
+        </div>
+        <div className="mock-card-chip"></div>
+        <div className="mock-card-number">{primaryNumber}</div>
+        <div className="mock-card-details">
+          <div>
+            <div className="mock-card-field-lbl">Holder Name</div>
+            <div className="mock-card-field-val">{holderName}</div>
+          </div>
+          <div>
+            <div className="mock-card-field-lbl">{activeTab === 'Emirates ID' ? 'Card Number' : 'Nationality'}</div>
+            <div className="mock-card-field-val">
+              {activeTab === 'Emirates ID' 
+                ? (ocrForm.customFields.cardNumber || '-') 
+                : (ocrForm.customFields.nationality || ocrForm.customFields.issuingPlace || 'UAE')}
+            </div>
+          </div>
+        </div>
+        <div className="mock-card-dates">
+          <div>
+            <div className="mock-card-field-lbl">Issue Date</div>
+            <div className="mock-card-field-val">{ocrForm.startDate || 'YYYY-MM-DD'}</div>
+          </div>
+          <div>
+            <div className="mock-card-field-lbl">Expiry Date</div>
+            <div className="mock-card-field-val">{ocrForm.expiryDate || 'YYYY-MM-DD'}</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ animation: 'fadeIn 0.5s ease-out' }}>
+      {/* Profile Header Card */}
+      <div className="glass-card" style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div className="avatar-circle" style={{ width: '56px', height: '56px', fontSize: '1.25rem' }}>{employee.avatar}</div>
+          <div>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 700, letterSpacing: '-0.5px' }}>{employee.name}</h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{employee.role} &bull; <strong style={{ color: 'var(--primary-light)' }}>{employee.department}</strong></p>
+          </div>
+        </div>
+        
+        {/* Quick Expiry Warning Banner for Current User */}
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {Object.entries(employee.documents).some(([_, d]) => d.status === 'expired') && (
+            <div className="status-badge expired" style={{ padding: '8px 14px' }}>
+              <AlertTriangle size={14} /> Expired Documents
+            </div>
+          )}
+          {Object.entries(employee.documents).some(([_, d]) => d.status === 'expiring') && (
+            <div className="status-badge expiring" style={{ padding: '8px 14px' }}>
+              <Calendar size={14} /> Expiring Documents
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="tabs-container">
+        {documentTypes.map(type => {
+          const doc = employee.documents[type] || { status: 'missing' };
+          return (
+            <button 
+              key={type} 
+              className={`tab-btn ${activeTab === type ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab(type);
+                setSelectedFile(null);
+                setPreviewUrl(null);
+                setOcrForm({
+                  docNumber: '',
+                  startDate: '',
+                  expiryDate: '',
+                  fullName: '',
+                  customFields: {}
+                });
+                setScanLogs([]);
+              }}
+            >
+              <span className={`tab-status-dot ${getStatusClass(doc.status)}`}></span>
+              {type}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab Panel Content */}
+      <div className="glass-card">
+        {currentDoc.status !== 'missing' && !previewUrl ? (
+          /* Document Saved State Layout */
+          <div className="doc-details-grid" style={{ animation: 'fadeIn 0.3s ease-out' }}>
+            <div className="document-visual">
+              <div className="doc-info-bar">
+                <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  File Reference: <strong>{currentDoc.fileName}</strong>
+                </span>
+                <span className={`status-badge ${getStatusClass(currentDoc.status)}`}>
+                  {currentDoc.status}
+                </span>
+              </div>
+              
+              {/* Card visual rendering */}
+              <div style={{ height: '250px' }}>
+                <div className="mock-doc-visual-card">
+                  <div className="mock-card-logo-row">
+                    <span>{activeTab.toUpperCase()} DETAILS</span>
+                    <CheckCircle2 size={18} style={{ color: 'var(--status-valid)' }} />
+                  </div>
+                  <div className="mock-card-chip"></div>
+                  <div className="mock-card-number">{currentDoc.docNumber}</div>
+                  <div className="mock-card-details">
+                    <div>
+                      <div className="mock-card-field-lbl">Name</div>
+                      <div className="mock-card-field-val">{currentDoc.extractedFields?.fullName || employee.name}</div>
+                    </div>
+                    <div>
+                      <div className="mock-card-field-lbl">{activeTab === 'Emirates ID' ? 'Card Number' : 'Last Verified'}</div>
+                      <div className="mock-card-field-val">
+                        {activeTab === 'Emirates ID' 
+                          ? (currentDoc.extractedFields?.cardNumber || 'N/A') 
+                          : currentDoc.lastUpdated}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mock-card-dates">
+                    <div>
+                      <div className="mock-card-field-lbl">Issue Date</div>
+                      <div className="mock-card-field-val">{currentDoc.startDate || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div className="mock-card-field-lbl">Expiry Date</div>
+                      <div className="mock-card-field-val">{currentDoc.expiryDate || 'N/A'}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <div style={{ marginTop: '1rem', display: 'flex', gap: '10px' }}>
+                <button className="btn btn-secondary" onClick={() => {
+                  setSelectedFile({ name: currentDoc.fileName });
+                  setPreviewUrl('demo');
+                  setOcrForm({
+                    docNumber: currentDoc.docNumber,
+                    startDate: currentDoc.startDate,
+                    expiryDate: currentDoc.expiryDate,
+                    fullName: currentDoc.extractedFields?.fullName || employee.name,
+                    customFields: currentDoc.extractedFields || {}
+                  });
+                }}>
+                  <RefreshCw size={14} /> Update Scan
+                </button>
+                <button className="btn btn-danger" onClick={handleDeleteDoc}>
+                  <Trash2 size={14} /> Remove Document
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <h3 style={{ marginBottom: '1.25rem', fontSize: '1.1rem', fontWeight: 600 }}>Extracted Parameters</h3>
+              
+              <div className="fields-form">
+                {activeTab === 'Emirates ID' ? (
+                  /* Emirates ID Tab - Exactly 11 Fields View */
+                  <>
+                    <div className="form-group">
+                      <label>ID Number</label>
+                      <VerifiedField value={currentDoc.docNumber || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.docNumber || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.docNumber || '-'} rawOcrText={rawOcrText}>
+<AutoResizeTextarea className="form-input" disabled value={currentDoc.docNumber || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Name</label>
+                      <VerifiedField value={currentDoc.extractedFields?.fullName || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.fullName || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.fullName || '-'} rawOcrText={rawOcrText}>
+<AutoResizeTextarea className="form-input" disabled value={currentDoc.extractedFields?.fullName || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                    </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Date Of Birth</label>
+                        <VerifiedField value={currentDoc.extractedFields?.dob || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.dob || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.dob || '-'} rawOcrText={rawOcrText}>
+<input className="form-input" disabled value={currentDoc.extractedFields?.dob || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                      <div className="form-group">
+                        <label>Nationality</label>
+                        <VerifiedField value={currentDoc.extractedFields?.nationality || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.nationality || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.nationality || '-'} rawOcrText={rawOcrText}>
+<AutoResizeTextarea className="form-input" disabled value={currentDoc.extractedFields?.nationality || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                    </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Issuing Date</label>
+                        <VerifiedField value={currentDoc.startDate || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.startDate || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.startDate || '-'} rawOcrText={rawOcrText}>
+<input className="form-input" disabled value={currentDoc.startDate || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                      <div className="form-group">
+                        <label>Expiry Date</label>
+                        <VerifiedField value={currentDoc.expiryDate || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.expiryDate || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.expiryDate || '-'} rawOcrText={rawOcrText}>
+<input className="form-input" disabled value={currentDoc.expiryDate || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                    </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Sex</label>
+                        <VerifiedField value={currentDoc.extractedFields?.sex || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.sex || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.sex || '-'} rawOcrText={rawOcrText}>
+<AutoResizeTextarea className="form-input" disabled value={currentDoc.extractedFields?.sex || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                      <div className="form-group">
+                        <label>Card Number</label>
+                        <VerifiedField value={currentDoc.extractedFields?.cardNumber || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.cardNumber || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.cardNumber || '-'} rawOcrText={rawOcrText}>
+<AutoResizeTextarea className="form-input" disabled value={currentDoc.extractedFields?.cardNumber || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                    </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Occupation</label>
+                        <VerifiedField value={currentDoc.extractedFields?.occupation || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.occupation || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.occupation || '-'} rawOcrText={rawOcrText}>
+<AutoResizeTextarea className="form-input" disabled value={currentDoc.extractedFields?.occupation || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                      <div className="form-group">
+                        <label>Employer</label>
+                        <VerifiedField value={currentDoc.extractedFields?.employer || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.employer || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.employer || '-'} rawOcrText={rawOcrText}>
+<AutoResizeTextarea className="form-input" disabled value={currentDoc.extractedFields?.employer || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Issuing Place</label>
+                      <VerifiedField value={currentDoc.extractedFields?.issuingPlace || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.issuingPlace || '-'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.issuingPlace || '-'} rawOcrText={rawOcrText}>
+<AutoResizeTextarea className="form-input" disabled value={currentDoc.extractedFields?.issuingPlace || '-'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                    </div>
+                  </>
+                ) : (
+                  /* Standard Parameters View for other tabs */
+                  <>
+                    <div className="form-group">
+                      <label>Document Identification Number</label>
+                      <VerifiedField value={currentDoc.docNumber} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.docNumber} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.docNumber} rawOcrText={rawOcrText}>
+<input className="form-input" disabled value={currentDoc.docNumber} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                    </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Issue Date</label>
+                        <VerifiedField value={currentDoc.startDate || 'Not provided'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.startDate || 'Not provided'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.startDate || 'Not provided'} rawOcrText={rawOcrText}>
+<input className="form-input" disabled value={currentDoc.startDate || 'Not provided'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                      <div className="form-group">
+                        <label>Expiry Date</label>
+                        <VerifiedField value={currentDoc.expiryDate || 'Not provided'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.expiryDate || 'Not provided'} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.expiryDate || 'Not provided'} rawOcrText={rawOcrText}>
+<input className="form-input" disabled value={currentDoc.expiryDate || 'Not provided'} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                      </div>
+                    </div>
+    
+                    <div className="form-group">
+                      <label>Full Name Extracted</label>
+                      <VerifiedField value={currentDoc.extractedFields?.fullName || employee.name} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.fullName || employee.name} rawOcrText={rawOcrText}>
+<VerifiedField value={currentDoc.extractedFields?.fullName || employee.name} rawOcrText={rawOcrText}>
+<input className="form-input" disabled value={currentDoc.extractedFields?.fullName || employee.name} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                    </div>
+    
+                    {Object.entries(currentDoc.extractedFields || {}).map(([key, val]) => {
+                      if (key === 'fullName') return null;
+                      const labelFriendly = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                      return (
+                        <div className="form-group" key={key}>
+                          <label>{labelFriendly}</label>
+                          <VerifiedField value={val} rawOcrText={rawOcrText}>
+<VerifiedField value={val} rawOcrText={rawOcrText}>
+<VerifiedField value={val} rawOcrText={rawOcrText}>
+<input className="form-input" disabled value={val} />
+</VerifiedField>
+</VerifiedField>
+</VerifiedField>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Empty or Scanner Input Panel */
+          <div className="doc-details-grid">
+            <div className="document-visual">
+              {previewUrl ? (
+                /* Scanning Preview Box */
+                <div className="image-preview-box has-image">
+                  {isScanning && <div className="scan-line"></div>}
+                  
+                  {previewUrl === 'demo' ? (
+                    renderSimulatedCard()
+                  ) : (
+                    <img src={previewUrl} className="image-bg" alt="Uploaded Document Scanned" />
+                  )}
+                  
+                  {isScanning && (
+                    <div style={{ position: 'absolute', bottom: '12px', right: '12px', background: 'rgba(0,0,0,0.8)', padding: '4px 10px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className="tab-status-dot pending"></span>
+                      <span style={{ fontSize: '0.75rem', fontFamily: 'JetBrains Mono', color: 'var(--text-primary)' }}>OCR Scanning... {scanProgress}%</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Upload Drag Drop Area */
+                <div 
+                  className="image-preview-box" 
+                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                >
+                  <div className="upload-placeholder">
+                    <Upload size={36} className="text-secondary" style={{ animation: 'bounce 2s infinite' }} />
+                    <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Upload scanned image or document</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Supports JPG, PNG, PDF formats for real-time OCR</span>
+                    <button className="btn btn-primary" style={{ marginTop: '0.5rem' }}>Browse Local Files</button>
+                  </div>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="file-input" 
+                    accept="image/*,application/pdf" 
+                    multiple
+                    onChange={handleFileChange} 
+                  />
+                </div>
+              )}
+              
+              {/* Log Console Terminal for Scanning Process */}
+              {(isScanning || scanLogs.length > 0) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--accent)', fontWeight: 600 }}>
+                    <Terminal size={14} />
+                    <span>OCR ENGINE PIPELINE LOGS</span>
+                  </div>
+                  <div className="ocr-log-terminal">
+                    {scanLogs.map((log, i) => (
+                      <div className="ocr-log-line" key={i}>
+                        <span className="ocr-log-time">[{log.timestamp}]</span>
+                        <span className="ocr-log-text">{log.text}</span>
+                      </div>
+                    ))}
+                    {isScanning && (

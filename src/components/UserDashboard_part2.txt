@@ -1,0 +1,526 @@
+                    {isScanning && (
+                      <div className="ocr-log-line">
+                        <span className="ocr-log-time">&bull;</span>
+                        <span className="ocr-log-text" style={{ color: 'var(--primary-light)' }}>Processing image matrix blocks...</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="ocr-log-progress-bar" style={{ width: `${scanProgress}%` }}></div>
+                </div>
+              )}
+
+              {/* Demo Template Selector (Extremely user friendly to let them see OCR in action!) */}
+              {!previewUrl && (
+                <div className="demo-picker-container">
+                  <span className="demo-picker-label">Test the scanning engine instantly:</span>
+                  <div className="demo-picker-grid">
+                    {demoTemplates[activeTab] ? (
+                      <div 
+                        className="demo-template-option"
+                        onClick={() => handleDemoSelect(activeTab)}
+                      >
+                        <div>
+                          <div className="demo-template-title">{demoTemplates[activeTab].name}</div>
+                          <div className="demo-template-desc">{demoTemplates[activeTab].description}</div>
+                        </div>
+                        <Play size={14} className="text-secondary" />
+                      </div>
+                    ) : (
+                      <div 
+                        className="demo-template-option"
+                        onClick={() => handleDemoSelect("Emirates ID")}
+                      >
+                        <div>
+                          <div className="demo-template-title">Use Emirates ID Mock Template</div>
+                          <div className="demo-template-desc">Fills the container with a mock Emirates ID scan text.</div>
+                        </div>
+                        <Play size={14} className="text-secondary" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Input Verification Form */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                  <FileText size={18} className="text-secondary" /> Verify Extracted Details
+                </h3>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+                The fields below are populated automatically using OCR. Please double-check and correct any errors before saving.
+              </p>
+
+              <form className="fields-form" onSubmit={handleSaveDocument}>
+                {activeTab === 'Emirates ID' ? (
+                  /* Emirates ID Tab - Exactly 11 Numbered Fields */
+                  <>
+                    <div className="form-group">
+                      <label>ID Number</label>
+                      <VerifiedField value={ocrForm.docNumber} rawOcrText={rawOcrText}>
+<AutoResizeTextarea 
+                        className="form-input" 
+                        required 
+                        placeholder="e.g. 784-2000-3832428-9" 
+                        value={ocrForm.docNumber}
+                        onChange={(e) => setOcrForm({...ocrForm, docNumber: e.target.value})}
+                      />
+</VerifiedField>
+                    </div>
+                    
+
+                    <div className="form-group">
+                      <label>Name</label>
+                        <VerifiedField value={ocrForm.fullName} rawOcrText={rawOcrText}>
+<input 
+                          className="form-input" 
+                          required 
+                          placeholder="e.g. BABLU PRAJAPATI RAMBRIKSH PRAJAPATI" 
+                          value={ocrForm.fullName}
+                          onChange={(e) => setOcrForm({...ocrForm, fullName: e.target.value})}
+                        />
+</VerifiedField>
+                      </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Date Of Birth</label>
+                        <input 
+                          type="date"
+                          className="form-input" 
+                          required
+                          value={ocrForm.customFields.dob || ''}
+                          onChange={(e) => setOcrForm({
+                            ...ocrForm, 
+                            customFields: { ...ocrForm.customFields, dob: e.target.value }
+                          })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Nationality</label>
+                          <VerifiedField value={ocrForm.customFields.nationality || ''} rawOcrText={rawOcrText}>
+<AutoResizeTextarea 
+                            className="form-input" 
+                            required
+                            placeholder="e.g. INDIA" 
+                            value={ocrForm.customFields.nationality || ''}
+                            onChange={(e) => setOcrForm({
+                              ...ocrForm, 
+                              customFields: { ...ocrForm.customFields, nationality: e.target.value }
+                            })}
+                          />
+</VerifiedField>
+                        </div>
+                    </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Issuing Date</label>
+                        <input 
+                          type="date"
+                          className="form-input" 
+                          required
+                          value={ocrForm.startDate}
+                          onChange={(e) => setOcrForm({...ocrForm, startDate: e.target.value})}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Expiry Date</label>
+                        <input 
+                          type="date"
+                          className="form-input" 
+                          required
+                          value={ocrForm.expiryDate}
+                          onChange={(e) => setOcrForm({...ocrForm, expiryDate: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Sex</label>
+                        <VerifiedField value={ocrForm.customFields.sex || ''} rawOcrText={rawOcrText}>
+<select
+                          className="form-input" 
+                          required
+                          value={ocrForm.customFields.sex || ''}
+                          onChange={(e) => setOcrForm({
+                            ...ocrForm, 
+                            customFields: { ...ocrForm.customFields, sex: e.target.value }
+                          })}
+                        >
+                          <option value="" disabled>Select Gender</option>
+                          <option value="MALE">Male</option>
+                          <option value="FEMALE">Female</option>
+                        </select>
+</VerifiedField>
+                      </div>
+                      <div className="form-group">
+                        <label>Card Number</label>
+                        <VerifiedField value={ocrForm.customFields.cardNumber || ''} rawOcrText={rawOcrText}>
+<AutoResizeTextarea 
+                          className="form-input" 
+                          required
+                          placeholder="e.g. 139439373" 
+                          value={ocrForm.customFields.cardNumber || ''}
+                          onChange={(e) => setOcrForm({
+                            ...ocrForm, 
+                            customFields: { ...ocrForm.customFields, cardNumber: e.target.value }
+                          })}
+                        />
+</VerifiedField>
+                      </div>
+                    </div>
+                    
+                    <div className="form-row">
+                        <div className="form-group">
+                          <label>Occupation</label>
+                          <VerifiedField value={ocrForm.customFields.occupation || ''} rawOcrText={rawOcrText}>
+<select
+                            className="form-input" 
+                            required
+                            value={ocrForm.customFields.occupation || ''}
+                            onChange={(e) => setOcrForm({
+                              ...ocrForm, 
+                              customFields: { ...ocrForm.customFields, occupation: e.target.value }
+                            })}
+                          >
+                            <option value="" disabled>Select Occupation</option>
+                            <option value="Welder">Welder</option>
+                            <option value="Fabricator">Fabricator</option>
+                            <option value="Helper">Helper</option>
+                            <option value="Draftsman">Draftsman</option>
+                            <option value="Driver">Driver</option>
+                            <option value="Laundry Man">Laundry Man</option>
+                            <option value="Pressman">Pressman</option>
+                          </select>
+</VerifiedField>
+                        </div>
+                        
+                        <div className="form-group">
+                          <label>Employer</label>
+                          <VerifiedField value={ocrForm.customFields.employer || ''} rawOcrText={rawOcrText}>
+<select
+                            className="form-input" 
+                            required
+                            value={ocrForm.customFields.employer || ''}
+                            onChange={(e) => setOcrForm({
+                              ...ocrForm, 
+                              customFields: { ...ocrForm.customFields, employer: e.target.value }
+                            })}
+                          >
+                            <option value="" disabled>Select Employer</option>
+                            <option value="Jabel Al Malayha W.Shop LLC SP">Jabel Al Malayha W.Shop LLC SP</option>
+                            <option value="Atlas Laundry LLC">Atlas Laundry LLC</option>
+                          </select>
+</VerifiedField>
+                        </div>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Issuing Place</label>
+                        <VerifiedField value={ocrForm.customFields.issuingPlace || ''} rawOcrText={rawOcrText}>
+<select
+                          className="form-input" 
+                          required
+                          value={ocrForm.customFields.issuingPlace || ''}
+                          onChange={(e) => setOcrForm({
+                            ...ocrForm, 
+                            customFields: { ...ocrForm.customFields, issuingPlace: e.target.value }
+                          })}
+                        >
+                          <option value="" disabled>Select Issuing Place</option>
+                          <option value="Dubai">Dubai</option>
+                          <option value="Sharjah">Sharjah</option>
+                        </select>
+</VerifiedField>
+                      </div>
+                  </>
+                ) : activeTab === 'Visa' ? (
+                  /* Visa Tab Custom Fields */
+                  <>
+                    <div className="form-group">
+                      <label>Name</label>
+                      <VerifiedField value={ocrForm.fullName} rawOcrText={rawOcrText}>
+<input 
+                        className="form-input" 
+                        required 
+                        placeholder="e.g. Rachel Green" 
+                        value={ocrForm.fullName}
+                        onChange={(e) => setOcrForm({...ocrForm, fullName: e.target.value})}
+                      />
+</VerifiedField>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Id Number</label>
+                      <VerifiedField value={ocrForm.docNumber} rawOcrText={rawOcrText}>
+<input 
+                        className="form-input" 
+                        required 
+                        placeholder="e.g. 784-1992-1234567-2" 
+                        value={ocrForm.docNumber}
+                        onChange={(e) => setOcrForm({...ocrForm, docNumber: e.target.value})}
+                      />
+</VerifiedField>
+                    </div>
+
+                    <div className="form-group">
+                      <label>File Number</label>
+                      <VerifiedField value={ocrForm.customFields.fileNumber || ''} rawOcrText={rawOcrText}>
+<input 
+                        className="form-input" 
+                        placeholder="e.g. 1029384"
+                        value={ocrForm.customFields.fileNumber || ''}
+                        onChange={(e) => setOcrForm({
+                          ...ocrForm, 
+                          customFields: { ...ocrForm.customFields, fileNumber: e.target.value }
+                        })}
+                      />
+</VerifiedField>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Passport Number</label>
+                      <VerifiedField value={ocrForm.customFields.passportNumber || ''} rawOcrText={rawOcrText}>
+<input 
+                        className="form-input" 
+                        placeholder="e.g. K1234567"
+                        value={ocrForm.customFields.passportNumber || ''}
+                        onChange={(e) => setOcrForm({
+                          ...ocrForm, 
+                          customFields: { ...ocrForm.customFields, passportNumber: e.target.value }
+                        })}
+                      />
+</VerifiedField>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Place of Issue</label>
+                        <VerifiedField value={ocrForm.customFields.issuingPlace || ''} rawOcrText={rawOcrText}>
+<select
+                          className="form-input" 
+                          value={ocrForm.customFields.issuingPlace || ''}
+                          onChange={(e) => setOcrForm({
+                            ...ocrForm, 
+                            customFields: { ...ocrForm.customFields, issuingPlace: e.target.value }
+                          })}
+                        >
+                          <option value="" disabled>Select Issuing Place</option>
+                          <option value="Dubai">Dubai</option>
+                          <option value="Sharjah">Sharjah</option>
+                        </select>
+</VerifiedField>
+                      </div>
+
+                      <div className="form-group">
+                        <label>Occupation</label>
+                        <VerifiedField value={ocrForm.customFields.occupation || ''} rawOcrText={rawOcrText}>
+<select
+                          className="form-input" 
+                          value={ocrForm.customFields.occupation || ''}
+                          onChange={(e) => setOcrForm({
+                            ...ocrForm, 
+                            customFields: { ...ocrForm.customFields, occupation: e.target.value }
+                          })}
+                        >
+                          <option value="" disabled>Select Occupation</option>
+                          <option value="Welder">Welder</option>
+                          <option value="Fabricator">Fabricator</option>
+                          <option value="Helper">Helper</option>
+                          <option value="Draftsman">Draftsman</option>
+                          <option value="Driver">Driver</option>
+                          <option value="Laundry Man">Laundry Man</option>
+                          <option value="Pressman">Pressman</option>
+                        </select>
+</VerifiedField>
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Employer</label>
+                      <VerifiedField value={ocrForm.customFields.employer || ''} rawOcrText={rawOcrText}>
+<select
+                        className="form-input" 
+                        value={ocrForm.customFields.employer || ''}
+                        onChange={(e) => setOcrForm({
+                          ...ocrForm, 
+                          customFields: { ...ocrForm.customFields, employer: e.target.value }
+                        })}
+                      >
+                        <option value="" disabled>Select Employer</option>
+                        <option value="Jabel Al Malayha W.Shop LLC SP">Jabel Al Malayha W.Shop LLC SP</option>
+                        <option value="Atlas Laundry LLC">Atlas Laundry LLC</option>
+                      </select>
+</VerifiedField>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Issue Date</label>
+                        <input 
+                          type="date"
+                          className="form-input" 
+                          required 
+                          value={ocrForm.startDate}
+                          onChange={(e) => setOcrForm({...ocrForm, startDate: e.target.value})}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Expiry Date</label>
+                        <input 
+                          type="date"
+                          className="form-input" 
+                          required 
+                          value={ocrForm.expiryDate}
+                          onChange={(e) => setOcrForm({...ocrForm, expiryDate: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* Standard Verify Form for other tabs */
+                  <>
+                    <div className="form-group">
+                      <label>Document ID / Card Number</label>
+                      <VerifiedField value={ocrForm.docNumber} rawOcrText={rawOcrText}>
+<input 
+                        className="form-input" 
+                        required 
+                        placeholder="e.g. 784-1992-1234567-2" 
+                        value={ocrForm.docNumber}
+                        onChange={(e) => setOcrForm({...ocrForm, docNumber: e.target.value})}
+                      />
+</VerifiedField>
+                    </div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Issue Date</label>
+                        <input 
+                          type="date"
+                          className="form-input" 
+                          required 
+                          value={ocrForm.startDate}
+                          onChange={(e) => setOcrForm({...ocrForm, startDate: e.target.value})}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Expiry Date</label>
+                        <input 
+                          type="date"
+                          className="form-input" 
+                          required 
+                          value={ocrForm.expiryDate}
+                          onChange={(e) => setOcrForm({...ocrForm, expiryDate: e.target.value})}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Full Name</label>
+                      <VerifiedField value={ocrForm.fullName} rawOcrText={rawOcrText}>
+<input 
+                        className="form-input" 
+                        required 
+                        placeholder="Enter document holder name" 
+                        value={ocrForm.fullName}
+                        onChange={(e) => setOcrForm({...ocrForm, fullName: e.target.value})}
+                      />
+</VerifiedField>
+                    </div>
+                  </>
+                )}
+
+
+                {activeTab === 'Labour Card' && (
+                  <div className="form-group">
+                    <label>Work Permit Number</label>
+                    <VerifiedField value={ocrForm.customFields.workPermitNo || ''} rawOcrText={rawOcrText}>
+<input 
+                      className="form-input" 
+                      placeholder="e.g. WP-9083120"
+                      value={ocrForm.customFields.workPermitNo || ''}
+                      onChange={(e) => setOcrForm({
+                        ...ocrForm, 
+                        customFields: { ...ocrForm.customFields, workPermitNo: e.target.value }
+                      })}
+                    />
+</VerifiedField>
+                  </div>
+                )}
+
+                {activeTab === 'ILOE' && (
+                  <div className="form-group">
+                    <label>Insurance Company Provider</label>
+                    <VerifiedField value={ocrForm.customFields.insuranceCompany || ''} rawOcrText={rawOcrText}>
+<input 
+                      className="form-input" 
+                      placeholder="e.g. Dubai Insurance Co"
+                      value={ocrForm.customFields.insuranceCompany || ''}
+                      onChange={(e) => setOcrForm({
+                        ...ocrForm, 
+                        customFields: { ...ocrForm.customFields, insuranceCompany: e.target.value }
+                      })}
+                    />
+</VerifiedField>
+                  </div>
+                )}
+
+                {activeTab === 'Health Card' && (
+                  <div className="form-group">
+                    <label>Health Network Tier</label>
+                    <VerifiedField value={ocrForm.customFields.network || ''} rawOcrText={rawOcrText}>
+<input 
+                      className="form-input" 
+                      placeholder="e.g. Premium VIP Network"
+                      value={ocrForm.customFields.network || ''}
+                      onChange={(e) => setOcrForm({
+                        ...ocrForm, 
+                        customFields: { ...ocrForm.customFields, network: e.target.value }
+                      })}
+                    />
+</VerifiedField>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '1rem' }}>
+                  <button 
+                    type="submit" 
+                    className="btn btn-glow" 
+                    disabled={!ocrForm.docNumber || isScanning}
+                    style={{ flex: 1, justifyContent: 'center' }}
+                  >
+                    Save & Approve Document Details
+                  </button>
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    onClick={() => {
+                      setSelectedFile(null);
+                      setPreviewUrl(null);
+                      setOcrForm({
+                        docNumber: '',
+                        startDate: '',
+                        expiryDate: '',
+                        fullName: '',
+                        customFields: {}
+                      });
+                      setScanLogs([]);
+                      setRawOcrText('');
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
