@@ -1,7 +1,7 @@
 import sys
 import re
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'r', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'r', encoding='utf-8') as f:
     content = f.read()
 
 content = re.sub(r'<label>Id Number</label>\s*<VerifiedField[^>]*>\s*<input\s*className=\"form-input\"([^>]*placeholder=\"e\.g\. 784-1992-1234567-2\"[^>]*)/>\s*</VerifiedField>\s*</div>', 
@@ -44,7 +44,7 @@ content = re.sub(r'disabled=\{\!ocrForm\.docNumber \|\| isScanning\}\s*style=\{\
     r'''disabled={!ocrForm.docNumber || isScanning || hasValidationErrors}
                     style={{ flex: 1, justifyContent: 'center', opacity: hasValidationErrors ? 0.5 : 1, cursor: hasValidationErrors ? 'not-allowed' : 'pointer' }}''', content)
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'w', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'w', encoding='utf-8') as f:
     f.write(content)
 
 print('Patched edits 3 & 4!')

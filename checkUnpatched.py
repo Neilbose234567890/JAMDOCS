@@ -1,6 +1,6 @@
 import re
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'r', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'r', encoding='utf-8') as f:
     content = f.read()
 
 blocks = re.split(r'(<div className="form-group">.*?</div>)', content, flags=re.DOTALL)

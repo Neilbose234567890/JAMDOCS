@@ -1,6 +1,6 @@
 import re
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'r', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'r', encoding='utf-8') as f:
     content = f.read()
 
 # Pattern 1: Direct field input (e.g. docNumber)
@@ -144,6 +144,6 @@ visa_pass_repl = '''<ValidatedInput
                     />'''
 content = re.sub(visa_pass_pat, visa_pass_repl, content, flags=re.DOTALL)
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'w', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'w', encoding='utf-8') as f:
     f.write(content)
 print("Finished patching all inputs!")

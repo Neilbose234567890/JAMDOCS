@@ -1,6 +1,6 @@
 import re
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'r', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'r', encoding='utf-8') as f:
     content = f.read()
 
 # 1. Add ValidatedInput and ValidatedTextarea at the top
@@ -134,6 +134,6 @@ else:
     # Just in case there's weird formatting, let's do a regex sub
     content = re.sub(r'const validateField = .*?hasValidationErrors = Boolean\([\s\S]*?\);', new_check, content, flags=re.MULTILINE|re.DOTALL)
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'w', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'w', encoding='utf-8') as f:
     f.write(content)
 print("Base helpers and logic updated!")

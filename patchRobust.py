@@ -1,6 +1,6 @@
 import re
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'r', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'r', encoding='utf-8') as f:
     content = f.read()
 
 # Split into chunks of <div className="form-group">...</div>
@@ -74,6 +74,6 @@ for i, block in enumerate(blocks):
 
 content = "".join(blocks)
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'w', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'w', encoding='utf-8') as f:
     f.write(content)
 print("Finished robust patching!")

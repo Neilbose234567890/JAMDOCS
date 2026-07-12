@@ -1,6 +1,6 @@
 import sys
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'r', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'r', encoding='utf-8') as f:
     content = f.read()
 
 # Edit 1: add validationRules to props
@@ -157,7 +157,7 @@ new_button = """                  <button
                   </button>"""
 content = content.replace(old_button, new_button)
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'w', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'w', encoding='utf-8') as f:
     f.write(content)
 
 print('Patched UserDashboard!')

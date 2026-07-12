@@ -1,6 +1,6 @@
 import sys
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'r', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'r', encoding='utf-8') as f:
     content = f.read()
 
 helper = """  const validateField = (docType, fieldName, value) => {
@@ -30,6 +30,6 @@ helper = """  const validateField = (docType, fieldName, value) => {
 
 content = content.replace('  // Write log helper', helper)
 
-with open(r'c:\Document Projects\OCR DOC\src\components\UserDashboard.jsx', 'w', encoding='utf-8') as f:
+with open(r'src/components/UserDashboard.jsx', 'w', encoding='utf-8') as f:
     f.write(content)
 print('SUCCESS')
