@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { Lock, Mail, ShieldAlert, ArrowRight, RefreshCw } from 'lucide-react';
 import logoImg from '../assets/logo.jpg';
+import { clearAppData } from '../utils/safeStorage';
 
 export default function LoginScreen({ onLogin, users }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const handleResetData = () => {
-    const keys = ['ocr_tracker_users', 'ocr_tracker_employees', 'ocr_tracker_companies', 'ocr_tracker_vehicles', 'ocr_tracker_properties', 'ocr_doc_categories', 'ocr_field_configs'];
-    keys.forEach(key => localStorage.removeItem(key));
+    clearAppData();
     setShowResetConfirm(false);
     window.location.reload();
   };

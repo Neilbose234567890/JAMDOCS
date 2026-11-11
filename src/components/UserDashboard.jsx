@@ -13,10 +13,14 @@ import {
   ArrowLeft,
   Play,
   Terminal,
+  Archive,
+  LogOut,
 } from "lucide-react";
 
 import { performRealOCR, parseExtractedText, convertPdfToCanvas } from '../utils/ocrScanner';
 import { demoTemplates } from '../utils/mockData';
+import { getDocStatus } from '../utils/docLifecycle';
+import OldDocumentsPanel from './OldDocumentsPanel';
 
 function AutoResizeTextarea({ className, value, onChange, placeholder, required, disabled }) {
   const textareaRef = useRef(null);
@@ -121,16 +125,11 @@ function VerifiedField({ value, rawOcrText, children }) {
   );
 }
 
-export default function UserDashboard({ employees = [], employee, entities, entity: propEntity, loggedInUser, fieldConfigs, documentCategories = [], activeDocTypes = [], onUpdateDocuments, initialTab = "", onBack }) {
+export default function UserDashboard({ employees = [], employee, entities, entity: propEntity, loggedInUser, fieldConfigs, documentCategories = [], activeDocTypes = [], onUpdateDocuments, initialTab = "", onBack, onLogout }) {
   // Support both prop naming patterns (employees/entities and employee/entity)
   const entityList = entities || employees;
   const currentEntity = propEntity || employee;
   const [activeTab, setActiveTab] = useState(initialTab || activeDocTypes[0] || "");
-
-  useEffect(() => {
-    if (initialTab) setActiveTab(initialTab);
-    else if (activeDocTypes.length > 0 && !activeTab) setActiveTab(activeDocTypes[0]);
-  }, [initialTab, activeDocTypes]);
 
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
@@ -141,19 +140,36 @@ export default function UserDashboard({ employees = [], employee, entities, enti
 
   const [ocrForm, setOcrForm] = useState({ docNumber: "", startDate: "", expiryDate: "", fullName: "", customFields: {} });
 
+  // Old Documents archive (expired versions) + renewal flow
+  const [showOldDocs, setShowOldDocs] = useState(false);
+  const [oldDocsScope, setOldDocsScope] = useState(null);
+  const [isRenewing, setIsRenewing] = useState(false);
+  const [renewalRef, setRenewalRef] = useState(null);
+
   const fileInputRef = useRef(null);
   const scanSessionIdRef = useRef(0);
 
   // Permission checks
   const perms = loggedInUser?.permissions || { view: true, add: false, edit: false, save: false, delete: false };
-  const userAccessRights = loggedInUser?.accessRights || [];
   const isAdmin = loggedInUser?.sysRole === 'admin';
 
-  // Use dynamic doc types from props, filtered by user access
-  const documentTypes = activeDocTypes.filter(dt => {
-    if (isAdmin) return true;
-    return userAccessRights.includes(dt);
-  });
+  // Every role sees the module's full category set: the dashboard lists all
+  // categories for everyone, so the document page must match it.
+  const documentTypes = activeDocTypes;
+
+  // Single source of truth for the selected tab: it must always be one the user
+  // can see. `initialTab` only wins when it is actually allowed, so the prop and
+  // this access filter can never fight each other (blank tab / render churn).
+  const documentTypesKey = documentTypes.join('|');
+  useEffect(() => {
+    const allowed = documentTypesKey ? documentTypesKey.split('|') : [];
+    if (allowed.length === 0) {
+      if (activeTab) setActiveTab('');
+      return;
+    }
+    if (activeTab && allowed.includes(activeTab)) return;
+    setActiveTab(initialTab && allowed.includes(initialTab) ? initialTab : allowed[0]);
+  }, [documentTypesKey, initialTab, activeTab]);
 
   const getAllErrors = () => {
     let hasError = false;
@@ -172,6 +188,16 @@ export default function UserDashboard({ employees = [], employee, entities, enti
   const hasValidationErrors = getAllErrors();
 
   const currentDoc = employee?.documents?.[activeTab] || { status: 'missing' };
+  // Live status from the expiry date, so the UI is correct even before the
+  // stored record has been reconciled.
+  const currentStatus = currentDoc.expiryDate ? getDocStatus(currentDoc.expiryDate) : currentDoc.status;
+
+  // Archived (expired) versions visible to this user
+  const visibleOldDocuments = (Array.isArray(employee?.oldDocuments) ? employee.oldDocuments : [])
+    .filter(item => !item?.docType || documentTypes.includes(item.docType))
+    .slice()
+    .sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || '')));
+  const activeTabArchiveCount = visibleOldDocuments.filter(item => item.docType === activeTab).length;
 
   const addLog = (text) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -323,16 +349,8 @@ export default function UserDashboard({ employees = [], employee, entities, enti
 
   const handleSaveDocument = (e) => {
     e.preventDefault();
-    let status = "valid";
-    if (ocrForm.expiryDate) {
-      const today = new Date("2026-07-08");
-      const expiry = new Date(ocrForm.expiryDate);
-      if (expiry < today) status = "expired";
-      else {
-        const diffDays = Math.ceil(Math.abs(expiry - today) / (1000 * 60 * 60 * 24));
-        if (diffDays <= 30) status = "expiring";
-      }
-    }
+    const computedStatus = ocrForm.expiryDate ? getDocStatus(ocrForm.expiryDate) : 'valid';
+    const status = computedStatus === 'missing' ? 'valid' : computedStatus;
     const updatedDoc = {
       status, docNumber: ocrForm.docNumber, startDate: ocrForm.startDate,
       expiryDate: ocrForm.expiryDate,
@@ -342,8 +360,33 @@ export default function UserDashboard({ employees = [], employee, entities, enti
     };
     onUpdateDocuments(employee?.id, activeTab, updatedDoc);
     setSelectedFile(null); setPreviewUrl(null);
+    setIsRenewing(false); setRenewalRef(null);
     setOcrForm({ docNumber: "", startDate: "", expiryDate: "", fullName: "", customFields: {} });
     setScanLogs([]);
+  };
+
+  // Start the "renew an expired document" flow: open the upload form with a
+  // reference to the previous (expired) version.
+  const handleStartRenewal = (reference) => {
+    if (!perms.add) return;
+    scanSessionIdRef.current += 1;
+    setActiveTab(reference?.docType || activeTab);
+    setShowOldDocs(false);
+    setOldDocsScope(null);
+    setIsRenewing(true);
+    setRenewalRef(reference || {
+      docType: activeTab,
+      docNumber: currentDoc.docNumber,
+      startDate: currentDoc.startDate,
+      expiryDate: currentDoc.expiryDate
+    });
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setIsScanning(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setOcrForm({ docNumber: "", startDate: "", expiryDate: "", fullName: employee?.name || "", customFields: {} });
+    setScanLogs([]);
+    setRawOcrText("");
   };
 
   const handleDeleteDoc = () => {
@@ -389,10 +432,17 @@ export default function UserDashboard({ employees = [], employee, entities, enti
     return (
       <div className="empty-state" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
         <FileText size={48} className="text-secondary" />
-        <h3 style={{ marginTop: '1rem' }}>No Employee Assigned</h3>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-          You don't have any employees assigned to manage. Contact your admin.
+        <h3 style={{ marginTop: '1rem' }}>No Record Assigned</h3>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', maxWidth: '420px', margin: '8px auto 0' }}>
+          {isAdmin
+            ? 'Nothing to show in this module yet. Add a record from the Admin view.'
+            : 'Your account is not linked to any record yet. Contact your administrator to assign documents to you.'}
         </p>
+        {onLogout && (
+          <button className="btn btn-secondary" style={{ marginTop: '1.25rem' }} onClick={onLogout}>
+            <LogOut size={14} style={{ marginRight: '6px' }} /> Log out
+          </button>
+        )}
       </div>
     );
   }
@@ -416,10 +466,10 @@ export default function UserDashboard({ employees = [], employee, entities, enti
           </div>
         </div>
         <div style={{ display: "flex", gap: "10px" }}>
-          {Object.entries(employee.documents || {}).some(([_, d]) => d.status === "expired") && (
+          {Object.entries(employee.documents || {}).some(([_, d]) => (d.expiryDate ? getDocStatus(d.expiryDate) : d.status) === "expired") && (
             <div className="status-badge expired" style={{ padding: "8px 14px" }}><AlertTriangle size={14} /> Expired</div>
           )}
-          {Object.entries(employee.documents || {}).some(([_, d]) => d.status === "expiring") && (
+          {Object.entries(employee.documents || {}).some(([_, d]) => (d.expiryDate ? getDocStatus(d.expiryDate) : d.status) === "expiring") && (
             <div className="status-badge expiring" style={{ padding: "8px 14px" }}><Calendar size={14} /> Expiring</div>
           )}
         </div>
@@ -428,27 +478,78 @@ export default function UserDashboard({ employees = [], employee, entities, enti
       <div className="tabs-container">
         {documentTypes.map((type) => {
           const doc = employee.documents?.[type] || { status: "missing" };
+          const tabStatus = doc.expiryDate ? getDocStatus(doc.expiryDate) : doc.status;
           return (
-            <button key={type} className={`tab-btn ${activeTab === type ? "active" : ""}`}
+            <button key={type} className={`tab-btn ${activeTab === type && !showOldDocs ? "active" : ""}`}
               onClick={() => {
                 setActiveTab(type); setSelectedFile(null); setPreviewUrl(null);
+                setIsRenewing(false); setRenewalRef(null); setShowOldDocs(false);
                 setOcrForm({ docNumber: "", startDate: "", expiryDate: "", fullName: "", customFields: {} });
                 setScanLogs([]);
               }}>
-              <span className={`tab-status-dot ${getStatusClass(doc.status)}`}></span>{type}
+              <span className={`tab-status-dot ${getStatusClass(tabStatus)}`}></span>{type}
             </button>
           );
         })}
+        <button
+          className={`tab-btn old-docs-tab ${showOldDocs ? "active" : ""}`}
+          onClick={() => {
+            setOldDocsScope(null);
+            setShowOldDocs(true);
+            setIsRenewing(false); setRenewalRef(null);
+            setSelectedFile(null); setPreviewUrl(null);
+          }}
+          title="Archived (expired) document versions">
+          <Archive size={14} /> Old Documents
+          {visibleOldDocuments.length > 0 && (
+            <span className="old-docs-count">{visibleOldDocuments.length}</span>
+          )}
+        </button>
       </div>
 
       <div className="glass-card">
-        {currentDoc.status !== "missing" && !previewUrl ? (
+        {showOldDocs ? (
+          <OldDocumentsPanel
+            items={visibleOldDocuments}
+            initialDocType={oldDocsScope}
+            canRenew={Boolean(perms.add)}
+            onRenew={handleStartRenewal}
+            onClose={() => setShowOldDocs(false)}
+          />
+        ) : currentDoc.status !== "missing" && !previewUrl && !isRenewing ? (
           <div className="doc-details-grid" style={{ animation: "fadeIn 0.3s ease-out" }}>
             <div className="document-visual">
               <div className="doc-info-bar">
                 <span style={{ fontSize: "0.875rem", color: "var(--text-secondary)" }}>File: <strong>{currentDoc.fileName}</strong></span>
-                <span className={`status-badge ${getStatusClass(currentDoc.status)}`}>{currentDoc.status}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {activeTabArchiveCount > 0 && (
+                    <button className="btn btn-secondary" style={{ padding: "3px 8px", fontSize: "0.72rem" }}
+                      onClick={() => { setOldDocsScope(activeTab); setShowOldDocs(true); setIsRenewing(false); setRenewalRef(null); }}
+                      title={`Archived versions of ${activeTab}`}>
+                      <Archive size={13} /> Old ({activeTabArchiveCount})
+                    </button>
+                  )}
+                  <span className={`status-badge ${getStatusClass(currentStatus)}`}>{currentStatus}</span>
+                </div>
               </div>
+              {currentStatus === "expired" && (
+                <div className="expired-banner">
+                  <AlertTriangle size={16} />
+                  <div className="expired-banner-text">
+                    <strong>This {activeTab} expired on {currentDoc.expiryDate}.</strong>
+                    <span>Upload the renewed document to replace it. The expired version stays in Old Documents.</span>
+                  </div>
+                  {perms.add && (
+                    <button className="btn btn-glow" style={{ padding: "6px 12px", fontSize: "0.75rem", flexShrink: 0 }}
+                      onClick={() => handleStartRenewal({
+                        docType: activeTab, docNumber: currentDoc.docNumber,
+                        startDate: currentDoc.startDate, expiryDate: currentDoc.expiryDate
+                      })}>
+                      <RefreshCw size={13} /> Renew
+                    </button>
+                  )}
+                </div>
+              )}
               <div style={{ height: "250px" }}>
                 <div className="mock-doc-visual-card">
                   <div className="mock-card-logo-row"><span>{activeTab.toUpperCase()} DETAILS</span><CheckCircle2 size={18} style={{ color: "var(--status-valid)" }} /></div>
@@ -467,14 +568,21 @@ export default function UserDashboard({ employees = [], employee, entities, enti
               </div>
               <div style={{ marginTop: "1rem", display: "flex", gap: "10px" }}>
                 {perms.add && (
-                  <button className="btn btn-secondary" onClick={() => {
-                    setSelectedFile({ name: currentDoc.fileName }); setPreviewUrl("demo");
-                    setOcrForm({
-                      docNumber: currentDoc.docNumber, startDate: currentDoc.startDate,
-                      expiryDate: currentDoc.expiryDate, fullName: currentDoc.extractedFields?.fullName || employee.name,
-                      customFields: currentDoc.extractedFields || {}
-                    });
-                  }}><RefreshCw size={14} /> Update Scan</button>
+                  currentStatus === "expired" ? (
+                    <button className="btn btn-glow" onClick={() => handleStartRenewal({
+                      docType: activeTab, docNumber: currentDoc.docNumber,
+                      startDate: currentDoc.startDate, expiryDate: currentDoc.expiryDate
+                    })}><RefreshCw size={14} /> Renew Document</button>
+                  ) : (
+                    <button className="btn btn-secondary" onClick={() => {
+                      setSelectedFile({ name: currentDoc.fileName }); setPreviewUrl("demo");
+                      setOcrForm({
+                        docNumber: currentDoc.docNumber, startDate: currentDoc.startDate,
+                        expiryDate: currentDoc.expiryDate, fullName: currentDoc.extractedFields?.fullName || employee.name,
+                        customFields: currentDoc.extractedFields || {}
+                      });
+                    }}><RefreshCw size={14} /> Update Scan</button>
+                  )
                 )}
                 {perms.delete && (
                   <button className="btn btn-danger" onClick={handleDeleteDoc}><Trash2 size={14} /> Remove</button>
@@ -657,6 +765,33 @@ export default function UserDashboard({ employees = [], employee, entities, enti
         ) : (
           <div className="doc-details-grid">
             <div className="document-visual">
+              {isRenewing && renewalRef && (
+                <div className="renewal-reference">
+                  <div>
+                    <span className="renewal-reference-title"><RefreshCw size={14} /> Renewing {activeTab}</span>
+                    <span className="renewal-reference-meta">
+                      Previous version: {renewalRef.docNumber || "no number recorded"}
+                      {renewalRef.expiryDate ? ` \u00b7 expired ${renewalRef.expiryDate}` : ""}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    {perms.edit && (
+                      <button type="button" className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: "0.72rem" }}
+                        onClick={() => setOcrForm(prev => ({
+                          ...prev,
+                          docNumber: renewalRef.docNumber || "",
+                          startDate: renewalRef.startDate || ""
+                        }))}>
+                        Copy previous details
+                      </button>
+                    )}
+                    <button type="button" className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: "0.72rem" }}
+                      onClick={() => { setIsRenewing(false); setRenewalRef(null); }}>
+                      Cancel renewal
+                    </button>
+                  </div>
+                </div>
+              )}
               {previewUrl ? (
                 <div className="image-preview-box has-image">
                   {isScanning && <div className="scan-line"></div>}
@@ -968,6 +1103,7 @@ export default function UserDashboard({ employees = [], employee, entities, enti
                     <button type="button" className="btn btn-secondary" onClick={() => {
                       scanSessionIdRef.current += 1;
                       setSelectedFile(null); setPreviewUrl(null); setIsScanning(false);
+                      setIsRenewing(false); setRenewalRef(null);
                       if (fileInputRef.current) fileInputRef.current.value = "";
                       setOcrForm({ docNumber: "", startDate: "", expiryDate: "", fullName: "", customFields: {} });
                       setScanLogs([]); setRawOcrText("");

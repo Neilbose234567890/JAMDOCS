@@ -1,11 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Search, Plus, Shield, CheckCircle, AlertTriangle, XCircle, 
-  Eye, FileText, ChevronRight, Grid, List, Briefcase, PlusCircle, Settings, Trash2
+  Search, Plus, Shield, CheckCircle, AlertTriangle, XCircle, X,
+  Eye, FileText, ChevronRight, Grid, List, Briefcase, PlusCircle, Settings, Trash2, Globe, Edit3, Archive
 } from 'lucide-react';
 import { moduleFieldConfigs, getDefaultEntity, getEntityDisplayFields } from '../utils/entityFields';
+import OldDocumentsPanel from './OldDocumentsPanel';
 
-export default function AdminDashboard({ entities = [], users = [], fieldConfigs, activeDocTypes = [], documentCategories = [], activeModule = 'employee', moduleLabel = 'Entity', onUpdateFieldConfigs, onAddEntity, onEditEntity, onDeleteEntity, onSelectEntity, onAddUser, onEditUser, onDeleteUser, onUpdateDocCategories }) {
+export default function AdminDashboard({ entities = [], loggedInUser, users = [], fieldConfigs, activeDocTypes = [], documentCategories = [], allDocumentCategories = {}, activeModule = 'employee', moduleLabel = 'Entity', onUpdateFieldConfigs, onAddEntity, onEditEntity, onDeleteEntity, onSelectEntity, onAddUser, onEditUser, onDeleteUser, onUpdateDocCategories, onUpdateGlobalDocCategories }) {
+  // The dashboard itself is identical for every role (same stats, same records,
+  // same document table). Only the account/schema administration panels stay
+  // with admins - they can edit any password or grant permissions.
+  const isAdmin = loggedInUser?.sysRole === 'admin';
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [viewMode, setViewMode] = useState('list');
@@ -24,6 +29,21 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
   const [newCategoryName, setNewCategoryName] = useState('');
   const [editingCategoryIndex, setEditingCategoryIndex] = useState(null);
   const [editCategoryName, setEditCategoryName] = useState('');
+  const [showGlobalCategoryManager, setShowGlobalCategoryManager] = useState(false);
+  const [globalEditingCat, setGlobalEditingCat] = useState(null);
+  const [globalEditName, setGlobalEditName] = useState('');
+  const [globalNewCatName, setGlobalNewCatName] = useState('');
+  const [globalNewCatModule, setGlobalNewCatModule] = useState('employee');
+  const [oldDocsModal, setOldDocsModal] = useState(null);
+
+  const getModuleLabel = (mod) => {
+    const labels = { employee: 'Employee', company: 'Company', vehicle: 'Vehicle', property: 'Property' };
+    return labels[mod] || 'Entity';
+  };
+
+  const getModuleCategories = (mod) => {
+    return allDocumentCategories && allDocumentCategories[mod] ? allDocumentCategories[mod] : [];
+  };
 
   const allDocTypes = activeDocTypes;
   const actionLabels = [
@@ -179,6 +199,15 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
 
   const selectedEntity = entities.find(e => e.id === selectedEntityId);
 
+  // Archived (expired) document versions for an entity, optionally per doc type
+  const archivedDocsFor = (entity, docType = null) => {
+    const list = Array.isArray(entity?.oldDocuments) ? entity.oldDocuments : [];
+    const filtered = docType ? list.filter(item => item.docType === docType) : list;
+    return filtered
+      .slice()
+      .sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || '')));
+  };
+
   return (
     <div style={{ animation: 'fadeIn 0.5s ease-out' }}>
       <div className="dashboard-stats-grid">
@@ -188,16 +217,23 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
         <div className="glass-card stat-card expired"><div className="stat-info"><h3>Expired</h3><p>{expiredDocsCount}</p></div><div className="stat-icon-wrapper"><XCircle size={24} /></div></div>
       </div>
 
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '1rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-        <button className={`btn ${showCategoryManager ? 'btn-glow' : 'btn-secondary'}`}
-          onClick={() => { setShowCategoryManager(!showCategoryManager); setShowUserManager(false); }}>
-          <Settings size={14} /> Categories
-        </button>
-        <button className={`btn ${showUserManager ? 'btn-glow' : 'btn-secondary'}`}
-          onClick={() => { setShowUserManager(!showUserManager); setShowCategoryManager(false); }}>
-          <Shield size={14} /> Users
-        </button>
-      </div>
+      {/* Account / schema administration - admins only */}
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '1rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <button className={`btn ${showCategoryManager ? 'btn-glow' : 'btn-secondary'}`}
+            onClick={() => { setShowCategoryManager(!showCategoryManager); setShowUserManager(false); setShowGlobalCategoryManager(false); }}>
+            <Settings size={14} /> Categories
+          </button>
+          <button className={`btn ${showGlobalCategoryManager ? 'btn-glow' : 'btn-secondary'}`}
+            onClick={() => { setShowGlobalCategoryManager(!showGlobalCategoryManager); setShowUserManager(false); setShowCategoryManager(false); }}>
+            <Globe size={14} /> Global Categories
+          </button>
+          <button className={`btn ${showUserManager ? 'btn-glow' : 'btn-secondary'}`}
+            onClick={() => { setShowUserManager(!showUserManager); setShowCategoryManager(false); setShowGlobalCategoryManager(false); }}>
+            <Shield size={14} /> Users
+          </button>
+        </div>
+      )}
 
       {/* ============ CATEGORY MANAGEMENT ============ */}
       {showCategoryManager && (
@@ -362,8 +398,145 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
         </div>
       )}
 
+      {/* ============ GLOBAL CATEGORY MANAGER ============ */}
+      {showGlobalCategoryManager && (
+        <div className="glass-card">
+          <div className="admin-header-row" style={{ marginBottom: '1.5rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Globe size={18} className="text-primary-light" /> Global Category Manager</h3>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Edit categories across all modules</span>
+          </div>
+          <div className="data-table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Module</th>
+                  <th>Category Name</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'center' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {['employee', 'company', 'vehicle', 'property'].map(mod => {
+                  const cats = getModuleCategories(mod);
+                  return cats.length > 0 ? cats.map((cat, idx) => (
+                    <tr key={`${mod}-${cat.name}`}>
+                      <td>
+                        <span style={{ 
+                          display: 'inline-block', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600,
+                          background: mod === 'employee' ? 'rgba(37,99,235,0.1)' : mod === 'company' ? 'rgba(5,150,105,0.1)' : mod === 'vehicle' ? 'rgba(217,119,6,0.1)' : 'rgba(130,80,223,0.1)',
+                          color: mod === 'employee' ? '#3b82f6' : mod === 'company' ? '#059669' : mod === 'vehicle' ? '#d97706' : '#8250df'
+                        }}>{getModuleLabel(mod)}</span>
+                      </td>
+                      <td>
+                        {globalEditingCat && globalEditingCat.module === mod && globalEditingCat.index === idx ? (
+                          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <input className="form-input" autoFocus style={{ padding: '4px 8px', fontSize: '0.85rem', width: '200px' }}
+                              value={globalEditName}
+                              onChange={(e) => setGlobalEditName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  const name = globalEditName.trim();
+                                  if (!name) return;
+                                  if (cats.find((c, i) => c.name.toLowerCase() === name.toLowerCase() && i !== idx)) return alert('Already exists.');
+                                  onUpdateGlobalDocCategories(mod, cats.map((c, i) => i === idx ? { ...c, name } : c));
+                                  setGlobalEditingCat(null);
+                                }
+                                if (e.key === 'Escape') setGlobalEditingCat(null);
+                              }} />
+                            <button className="btn btn-success" style={{ padding: '2px 6px', fontSize: '0.65rem' }}
+                              onClick={() => {
+                                const name = globalEditName.trim();
+                                if (!name) return;
+                                if (cats.find((c, i) => c.name.toLowerCase() === name.toLowerCase() && i !== idx)) return alert('Already exists.');
+                                onUpdateGlobalDocCategories(mod, cats.map((c, i) => i === idx ? { ...c, name } : c));
+                                setGlobalEditingCat(null);
+                              }}>Save</button>
+                            <button className="btn btn-secondary" style={{ padding: '2px 6px', fontSize: '0.65rem' }}
+                              onClick={() => setGlobalEditingCat(null)}>X</button>
+                          </div>
+                        ) : (
+                          <span style={{ fontWeight: 600 }}>{cat.name}</span>
+                        )}
+                      </td>
+                      <td><span className={`status-badge ${cat.enabled ? 'valid' : 'expired'}`} style={{ fontSize: '0.7rem' }}>{cat.enabled ? 'Active' : 'Disabled'}</span></td>
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                          <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+                            onClick={() => { setGlobalEditingCat({ module: mod, index: idx }); setGlobalEditName(cat.name); }}>
+                            <Edit3 size={12} />
+                          </button>
+                          <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+                            onClick={() => onUpdateGlobalDocCategories(mod, cats.map((c, i) => i === idx ? { ...c, enabled: !c.enabled } : c))}>
+                            {cat.enabled ? 'Disable' : 'Enable'}
+                          </button>
+                          <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '0.7rem', color: 'var(--status-expired)', borderColor: 'rgba(239,68,68,0.3)' }}
+                            onClick={() => {
+                              if (window.confirm(`Delete "${cat.name}" from ${getModuleLabel(mod)}?`)) {
+                                onUpdateGlobalDocCategories(mod, cats.filter((_, i) => i !== idx));
+                              }
+                            }}>
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr key={`${mod}-empty`}>
+                      <td>
+                        <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, background: 'rgba(156,163,175,0.1)', color: 'var(--text-muted)' }}>
+                          {getModuleLabel(mod)}</span>
+                      </td>
+                      <td colSpan={3} style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.85rem' }}>No categories</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)' }}>
+            <h4 style={{ fontSize: '0.95rem', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Plus size={16} /> Add Category to Module</h4>
+            <div className="form-row" style={{ alignItems: 'flex-end' }}>
+              <div className="form-group" style={{ flex: '0 0 180px' }}>
+                <label>Module</label>
+                <select className="form-input" value={globalNewCatModule} onChange={(e) => setGlobalNewCatModule(e.target.value)}>
+                  <option value="employee">Employee</option>
+                  <option value="company">Company</option>
+                  <option value="vehicle">Vehicle</option>
+                  <option value="property">Property</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label>Category Name</label>
+                <input className="form-input" placeholder="e.g. Work Permit" value={globalNewCatName} 
+                  onChange={(e) => setGlobalNewCatName(e.target.value)} 
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const name = globalNewCatName.trim();
+                      if (!name) return;
+                      const modCats = getModuleCategories(globalNewCatModule);
+                      if (modCats.find(c => c.name.toLowerCase() === name.toLowerCase())) return alert('Already exists.');
+                      onUpdateGlobalDocCategories(globalNewCatModule, [...modCats, { name, enabled: true }]);
+                      setGlobalNewCatName('');
+                    }
+                  }} />
+              </div>
+              <button className="btn btn-primary" onClick={() => {
+                const name = globalNewCatName.trim();
+                if (!name) return;
+                const modCats = getModuleCategories(globalNewCatModule);
+                if (modCats.find(c => c.name.toLowerCase() === name.toLowerCase())) return alert('Already exists.');
+                onUpdateGlobalDocCategories(globalNewCatModule, [...modCats, { name, enabled: true }]);
+                setGlobalNewCatName('');
+              }}><Plus size={16} /> Add to {getModuleLabel(globalNewCatModule)}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ============ ENTITY MANAGEMENT ============ */}
-      {!showUserManager && !showCategoryManager && (
+      {!showUserManager && !showCategoryManager && !showGlobalCategoryManager && (
         <div className="glass-card" style={{ marginBottom: '2rem' }}>
           <div className="admin-header-row">
             <div className="search-bar" style={{ maxWidth: '350px' }}>
@@ -430,7 +603,14 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
                           ))}
                         </p>
                       </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {archivedDocsFor(selectedEntity).length > 0 && (
+                          <button className="btn btn-secondary"
+                            onClick={() => setOldDocsModal({ entity: selectedEntity, docType: null })}
+                            title="Archived (expired) document versions">
+                            <Archive size={14} /> Old Docs ({archivedDocsFor(selectedEntity).length})
+                          </button>
+                        )}
                         <button className="btn btn-secondary" onClick={openEditModal}><Briefcase size={14} /> Edit</button>
                         <button className="btn btn-secondary" style={{ color: 'var(--status-expired)', borderColor: 'rgba(239,68,68,0.3)' }}
                           onClick={() => setEntityToDelete(selectedEntity)}><Trash2 size={14} /> Delete</button>
@@ -446,6 +626,7 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
                         <tbody>
                           {allDocTypes.map(docName => {
                             const doc = selectedEntity.documents?.[docName] || { status: 'missing' };
+                            const archivedCount = archivedDocsFor(selectedEntity, docName).length;
                             return (
                               <tr key={docName}>
                                 <td style={{ fontWeight: 600 }}>
@@ -461,10 +642,19 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
                                 <td style={{ color: doc.status === 'expired' ? 'var(--status-expired)' : doc.status === 'expiring' ? 'var(--status-expiring)' : 'inherit' }}>{doc.expiryDate || '\u2014'}</td>
                                 <td>{getStatusBadge(doc.status)}</td>
                                 <td>
-                                  <button className={`btn ${doc.status !== 'missing' ? 'btn-secondary' : 'btn-primary'}`} style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                                    onClick={() => onSelectEntity(selectedEntity.id, docName)}>
-                                    {doc.status !== 'missing' ? 'Edit' : 'Upload'}
-                                  </button>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <button className={`btn ${doc.status !== 'missing' ? 'btn-secondary' : 'btn-primary'}`} style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                                      onClick={() => onSelectEntity(selectedEntity.id, docName)}>
+                                      {doc.status !== 'missing' ? 'Edit' : 'Upload'}
+                                    </button>
+                                    {archivedCount > 0 && (
+                                      <button className="old-chip"
+                                        onClick={() => setOldDocsModal({ entity: selectedEntity, docType: docName })}
+                                        title={`${archivedCount} archived version(s) of ${docName}`}>
+                                        <Archive size={12} /> {archivedCount}
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -508,7 +698,18 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <div className="avatar-circle" style={{ width: '28px', height: '28px', fontSize: '0.75rem' }}>{ent.avatar || ent.name.charAt(0)}</div>
-                              <div><span style={{ fontWeight: 600 }}>{ent.name}</span><span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>{ent.role || ''}</span></div>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontWeight: 600 }}>{ent.name}</span>
+                                  {archivedDocsFor(ent).length > 0 && (
+                                    <button className="old-chip" onClick={() => setOldDocsModal({ entity: ent, docType: null })}
+                                      title={`${archivedDocsFor(ent).length} archived document version(s)`}>
+                                      <Archive size={10} /> {archivedDocsFor(ent).length}
+                                    </button>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>{ent.role || ''}</span>
+                              </div>
                             </div>
                           </td>
                           {allDocTypes.map(docType => {
@@ -548,34 +749,36 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
       {/* ============ ADD ENTITY MODAL ============ */}
       {isAddModalOpen && (
         <div className="modal-overlay" onClick={() => setIsAddModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 className="modal-title">Add {moduleLabel}</h3>
-              <button className="modal-close-btn" onClick={() => setIsAddModalOpen(false)}>&times;</button>
+              <button className="modal-close-btn" aria-label={`Close add ${moduleLabel} form`} onClick={() => setIsAddModalOpen(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleAddSubmit}>
-              <div className="fields-form">
-                {(moduleFieldConfigs[activeModule] || moduleFieldConfigs.employee).map(field => (
-                  field.type === 'select' ? (
-                    <div className="form-group" key={field.key}>
-                      <label>{field.label}</label>
-                      <select className="form-input" value={newEntity[field.key] || ''} onChange={(e) => setNewEntity({ ...newEntity, [field.key]: e.target.value })}>
-                        {(field.options || []).map(opt => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="form-group" key={field.key}>
-                      <label>{field.label}</label>
-                      <input type={field.type} className="form-input" required={field.required} placeholder={field.placeholder} value={newEntity[field.key] || ''} onChange={(e) => setNewEntity({ ...newEntity, [field.key]: e.target.value })} />
-                    </div>
-                  )
-                ))}
+              <div className="modal-body">
+                <div className="fields-form">
+                  {(moduleFieldConfigs[activeModule] || moduleFieldConfigs.employee).map(field => (
+                    field.type === 'select' ? (
+                      <div className="form-group" key={field.key}>
+                        <label>{field.label}</label>
+                        <select className="form-input" value={newEntity[field.key] || ''} onChange={(e) => setNewEntity({ ...newEntity, [field.key]: e.target.value })}>
+                          {(field.options || []).map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="form-group" key={field.key}>
+                        <label>{field.label}</label>
+                        <input type={field.type} className="form-input" required={field.required} placeholder={field.placeholder} value={newEntity[field.key] || ''} onChange={(e) => setNewEntity({ ...newEntity, [field.key]: e.target.value })} />
+                      </div>
+                    )
+                  ))}
+                </div>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setIsAddModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn btn-glow">Add</button>
+                <button type="submit" className="btn btn-glow">Add {moduleLabel}</button>
               </div>
             </form>
           </div>
@@ -584,36 +787,38 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
 
       {/* ============ EDIT ENTITY MODAL ============ */}
       {isEditModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content glass-card" style={{ maxWidth: '500px' }}>
+        <div className="modal-overlay" onClick={() => setIsEditModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 style={{ margin: 0, fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Briefcase size={20} className="text-primary-light" /> Edit {moduleLabel}</h2>
-              <button className="btn btn-secondary" style={{ padding: '4px' }} onClick={() => setIsEditModalOpen(false)}><XCircle size={20} /></button>
+              <h3 className="modal-title">
+                <Briefcase size={18} className="text-primary-light" /> Edit {moduleLabel}</h3>
+              <button className="modal-close-btn" aria-label={`Close edit ${moduleLabel} form`} onClick={() => setIsEditModalOpen(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleEditSubmit}>
-              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {(moduleFieldConfigs[activeModule] || moduleFieldConfigs.employee).map(field => (
-                  field.type === 'select' ? (
-                    <div className="form-group" key={field.key}>
-                      <label>{field.label}</label>
-                      <select className="form-input" value={editEntity[field.key] || ''} onChange={(e) => setEditEntity({ ...editEntity, [field.key]: e.target.value })}>
-                        {(field.options || []).map(opt => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="form-group" key={field.key}>
-                      <label>{field.label}</label>
-                      <input type={field.type} className="form-input" required={field.required} placeholder={field.placeholder} value={editEntity[field.key] || ''} onChange={(e) => setEditEntity({ ...editEntity, [field.key]: e.target.value })} />
-                    </div>
-                  )
-                ))}
+              <div className="modal-body">
+                <div className="fields-form">
+                  {(moduleFieldConfigs[activeModule] || moduleFieldConfigs.employee).map(field => (
+                    field.type === 'select' ? (
+                      <div className="form-group" key={field.key}>
+                        <label>{field.label}</label>
+                        <select className="form-input" value={editEntity[field.key] || ''} onChange={(e) => setEditEntity({ ...editEntity, [field.key]: e.target.value })}>
+                          {(field.options || []).map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="form-group" key={field.key}>
+                        <label>{field.label}</label>
+                        <input type={field.type} className="form-input" required={field.required} placeholder={field.placeholder} value={editEntity[field.key] || ''} onChange={(e) => setEditEntity({ ...editEntity, [field.key]: e.target.value })} />
+                      </div>
+                    )
+                  ))}
+                </div>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setIsEditModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn btn-glow">Save</button>
+                <button type="submit" className="btn btn-glow">Save Changes</button>
               </div>
             </form>
           </div>
@@ -783,6 +988,36 @@ export default function AdminDashboard({ entities = [], users = [], fieldConfigs
               <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setUserToDelete(null)}>Cancel</button>
               <button className="btn btn-primary" style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.1)', color: 'var(--status-expired)', borderColor: 'rgba(239,68,68,0.3)' }}
                 onClick={() => { onDeleteUser(userToDelete.id); setUserToDelete(null); }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {oldDocsModal && (
+        <div className="modal-overlay" onClick={() => setOldDocsModal(null)} style={{ zIndex: 1000 }}>
+          <div className="modal-content" style={{ maxWidth: '620px', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}
+            onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Archive size={16} />
+                {oldDocsModal.docType ? `Old Documents \u2014 ${oldDocsModal.docType}` : `Old Documents \u2014 ${oldDocsModal.entity.name}`}
+              </h3>
+              <button type="button" className="modal-close-btn" aria-label="Close old documents"
+                onClick={() => setOldDocsModal(null)}><X size={18} /></button>
+            </div>
+            <div className="modal-body" style={{ overflowY: 'auto' }}>
+              <OldDocumentsPanel
+                items={archivedDocsFor(oldDocsModal.entity, oldDocsModal.docType)}
+                canRenew={Boolean(onSelectEntity)}
+                showHeader={false}
+                onRenew={(item) => {
+                  const entityId = oldDocsModal.entity.id;
+                  setOldDocsModal(null);
+                  onSelectEntity(entityId, item.docType);
+                }}
+              />
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setOldDocsModal(null)}>Close</button>
             </div>
           </div>
         </div>
